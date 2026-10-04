@@ -102,27 +102,42 @@ The following keyboard commands are active by default (can be disabled in the [v
 * "s" - Stop/Start - stops or starts playback of current file
 * "p" - Power off - stop playback and shutdown RPi
 * " " - (space bar) - Pause/Resume the player
+* "f" - Folder - switch to the next folder (only when `folder_select` is enabled)
 
 #### GPIO control:
 To enable GPIO control you need to set a GPIO pin mapping via the `gpio_pin_map` in the `control` section of the video_looper.ini. 
-Pins numbers are in "BOARD" numbering - see: https://www.raspberrypi.com/documentation/computers/raspberry-pi.html#gpio. Bridge a mapped pin with a Ground pin to trigger it.
+Pins are named like the Blinka `board` module: BCM numbering with a `D` prefix, so `"D17"` is GPIO17 (physical pin 11) - see: https://www.raspberrypi.com/documentation/computers/raspberry-pi.html#gpio. Bridge a mapped pin with a Ground pin to trigger it.
 
-The pin mapping has the form: "pinnumber" : "action”. The action can be one of the following:
+The pin mapping has the form: "pinname" : "action”. The action can be one of the following:
 * a filename as a string to play 
 * an absolute index number (starting with 0) 
 * a string in the form of `+n` or `-n` (with n being an integer) for a relative jump
+* `folder:next`, `folder:prev` or `folder:<name>` to select a folder (see folder select below)
+* `shutdown` to shut down the Raspberry Pi after holding the button for `shutdown_hold_time` seconds (default 2)
 * a keyboard command (see above) in the form of a pygame key constant (see list: https://www.pygame.org/docs/ref/key.html)
 
 Here are some examples that can be set: 
-* `"11" : 1`  -> pin 11 will start the second file in the playlist
-* `"13" : "4"` -> pin 13 starts the 5th video
-* `"16" : "+2"` -> pin 16 jumps 2 videos ahead
-* `"18" : "-1"` -> pin 18 jumps one video back
-* `"15" : "video.mp4"` -> pin 15 plays a file with name "video.mp4" (if it exists)
-* `"19" : "K_SPACE"` -> pin 19 sends the "space" keyboard command, pausing the current video
-* `"21" : "K_p"` -> pin 21 sends "p" keyboard command and thus triggers the shutdown of the Raspberry Pi
+* `"D17" : 1`  -> GPIO17 will start the second file in the playlist
+* `"D27" : "4"` -> GPIO27 starts the 5th video
+* `"D23" : "+2"` -> GPIO23 jumps 2 videos ahead
+* `"D24" : "-1"` -> GPIO24 jumps one video back
+* `"D22" : "video.mp4"` -> GPIO22 plays a file with name "video.mp4" (if it exists)
+* `"D10" : "K_SPACE"` -> GPIO10 sends the "space" keyboard command, pausing the current video
+* `"D9" : "K_p"` -> GPIO9 sends "p" keyboard command and thus triggers the shutdown of the Raspberry Pi
+* `"D3" : "shutdown"` -> holding the button on GPIO3 shuts down the Raspberry Pi
 
 For your convenience, these exact mappings can be easily enabled by uncommenting the example line in the video_looper.ini. You can also define your own mappings.
+
+#### folder select ("channels"):
+With `folder_select = true` in the `[control]` section only the videos in the selected folder are played, and you can switch folders like TV channels. List the folders in channel order with the `folders` setting:
+
+```ini
+folder_select = true
+folders = Cartoons, Nature, /home/pi/Videos/News
+gpio_pin_map = "D17": "folder:prev", "D27": "folder:next"
+```
+
+Relative names are looked up on the USB drive (or in the `[directory]` path), absolute paths are used as is. Folders without media files are skipped. If `folders` is empty, every subfolder with media files is used, sorted alphabetically. When switching, the folder name is shown for `channel_display_time` seconds instead of the countdown. The "f" key also switches to the next folder, and the selection is remembered across restarts.
 
 Note: to be used as an absolute index the action needs to be an integer not a string.
 Note 2: "keyboard_control" needs to be enabled in the ini for gpio to utilise keyboard commands.

@@ -69,6 +69,15 @@ class VideoLooper:
         self._keyboard_control = self._config.getboolean('control', 'keyboard_control')
         self._keyboard_control_disabled_while_playback = self._config.getboolean('control', 'keyboard_control_disabled_while_playback')
         self._gpio_control_disabled_while_playback = self._config.getboolean('control', 'gpio_control_disabled_while_playback')
+        self._shutdown_hold_time = self._config.getfloat('control', 'shutdown_hold_time', fallback=2)
+        # Folder select: every subfolder of the search paths is a selectable playlist
+        self._folder_select = self._config.getboolean('control', 'folder_select', fallback=False)
+        # Optional fixed list of folders ("channels"), separated by commas or newlines
+        self._folder_list = [f.strip() for f in re.split('[,\n]', self._config.get('control', 'folders', fallback='')) if f.strip()]
+        self._channel_display_time = self._config.getfloat('control', 'channel_display_time', fallback=1)
+        self._folders = []
+        self._current_folder = self._load_folder_selection()
+        self._reload_requested = False
         self._copyloader = self._config.getboolean('copymode', 'copyloader')
         # Get seconds for countdown from config
         self._countdown_time = self._config.getint('video_looper', 'countdown_time')
@@ -131,7 +140,7 @@ class VideoLooper:
                 self._gpio_setup()
             except Exception as err:
                 self._pinMap = None
-                self._print("gpio_pin_map setting is not valid and/or error with GPIO setup")
+                self._print("gpio_pin_map setting is not valid and/or error with GPIO setup: {0!r}".format(err))
         else:
             self._pinMap = None
 
@@ -234,12 +243,82 @@ class VideoLooper:
         else:
             return self._build_playlist_from_all_files()
 
+    def _load_folder_selection(self):
+        try:
+            with open('selected_folder.txt', 'r') as f:
+                return f.read().strip() or None
+        except FileNotFoundError:
+            return None
+
+    def _save_folder_selection(self):
+        try:
+            with open('selected_folder.txt', 'w') as f:
+                f.write(self._current_folder)
+        except OSError as err:
+            self._print('Could not save folder selection: {0}'.format(err))
+
+    def _is_media_file(self, name):
+        return name[0] != '.' and re.search('\\.({0})$'.format(self._extensions), name, flags=re.IGNORECASE)
+
+    def _resolve_folder(self, folder, paths):
+        """Absolute folders are used as is, relative ones are looked up in the search paths."""
+        if os.path.isabs(folder):
+            return [folder]
+        return [os.path.join(path, folder) for path in paths]
+
+    def _has_media(self, path):
+        return os.path.isdir(path) and any(self._is_media_file(f) for f in os.listdir(path))
+
+    def _folder_paths(self, paths):
+        """Find the selectable folders (configured or all subfolders of the search paths)
+        that contain media and return the paths of the currently selected one.
+        """
+        if self._folder_list:
+            candidates = self._folder_list
+        else:
+            candidates = sorted({x for path in paths if os.path.isdir(path)
+                                 for x in os.listdir(path) if x[0] != '.'})
+        self._folders = [f for f in candidates
+                         if any(self._has_media(p) for p in self._resolve_folder(f, paths))]
+        if not self._folders:
+            self._print('Folder select is enabled but no folders with media were found.')
+            return paths
+        if self._current_folder not in self._folders:
+            self._current_folder = self._folders[0]
+        self._print('Folders: {0}, selected: {1}'.format(self._folders, self._current_folder))
+        return self._resolve_folder(self._current_folder, paths)
+
+    def _select_folder(self, target):
+        """Select a folder by name, index or "next"/"prev" and reload the playlist."""
+        if not self._folders:
+            self._print('No folders to select from.')
+            return
+        if target in ('next', 'prev'):
+            index = self._folders.index(self._current_folder) if self._current_folder in self._folders else 0
+            index = (index + (1 if target == 'next' else -1)) % len(self._folders)
+            folder = self._folders[index]
+        elif target in self._folders:
+            folder = target
+        elif target.isdigit() and int(target) < len(self._folders):
+            folder = self._folders[int(target)]
+        else:
+            self._print('Folder {0} not found.'.format(target))
+            return
+        self._print('Selecting folder: {0}'.format(folder))
+        self._current_folder = folder
+        self._save_folder_selection()
+        self._reload_requested = True
+        self._player.stop(3)
+        self._playbackStopped = False
+
     def _build_playlist_from_all_files(self):
         """Search all the file reader paths for movie files with the provided
         extensions.
         """
         # Get list of paths to search from the file reader.
         paths = self._reader.search_paths()
+        if self._folder_select:
+            paths = self._folder_paths(paths)
         # Enumerate all movie files inside those paths.
         movies = []
         for path in paths:
@@ -249,7 +328,7 @@ class VideoLooper:
 
             for x in os.listdir(path):
                 # Ignore hidden files (useful when file loaded on usb key from an OSX computer
-                if x[0] != '.' and re.search('\.({0})$'.format(self._extensions), x, flags=re.IGNORECASE):
+                if self._is_media_file(x):
                     repeatsetting = re.search('_repeat_([0-9]*)x', x, flags=re.IGNORECASE)
                     if (repeatsetting is not None):
                         repeat = repeatsetting.group(1)
@@ -290,8 +369,9 @@ class VideoLooper:
         message if the on screen display is enabled.
         """
         # Print message to console with number of media files in playlist.
-        message = 'Found {0} media file{1}.'.format(playlist.length(), 
-            's' if playlist.length() >= 2 else '')
+        message = 'Found {0} media file{1}{2}.'.format(playlist.length(), 
+            's' if playlist.length() >= 2 else '',
+            ' in "{0}"'.format(self._current_folder) if self._folder_select and self._folders else '')
         self._print(message)
         # Do nothing else if the OSD is turned off.
         if not self._osd:
@@ -399,13 +479,19 @@ class VideoLooper:
         self._screen.blit(label, (sw/2-lw/2, sh/2-lh/2))
         pygame.display.update()
 
-    def _prepare_to_run_playlist(self, playlist):
+    def _prepare_to_run_playlist(self, playlist, channel_switch=False):
         """Display messages when a new playlist is loaded."""
         # If there are movies to play show a countdown first (if OSD enabled),
         # or if no movies are available show the idle message.
         self._blank_screen()
         self._firstStart = True
-        if playlist.length() > 0:
+        if playlist.length() > 0 and channel_switch:
+            # switching folders should feel like zapping channels: just show the name briefly
+            self.display_message(os.path.basename(self._current_folder.rstrip('/')))
+            if self._osd:
+                time.sleep(self._channel_display_time)
+            self._blank_screen()
+        elif playlist.length() > 0:
             self._animate_countdown(playlist)
             self._blank_screen()
         else:
@@ -463,6 +549,9 @@ class VideoLooper:
                     self._playlist.seek(-1)
                     self._player.stop(3)
                     self._playbackStopped = False
+                if event.key == pygame.K_f and self._folder_select:
+                    self._print("f was pressed. next folder...")
+                    self._select_folder('next')
     
     def _handle_gpio_control(self):
         if self._pinMap == None:
@@ -473,12 +562,23 @@ class VideoLooper:
             return
 
         for pin_name in self._pinMap.keys():
-            self._pinMap[pin_name]["debouncer"].update()
-            if self._pinMap[pin_name]["debouncer"].fell:
-                action = self._pinMap[pin_name]["action"]
+            debouncer = self._pinMap[pin_name]["debouncer"]
+            debouncer.update()
+            action = self._pinMap[pin_name]["action"]
+
+            # shutdown only triggers after the button has been held down for a while
+            if action == 'shutdown':
+                if not debouncer.value and debouncer.current_duration >= self._shutdown_hold_time:
+                    self._print(f'pin {pin_name} held for {self._shutdown_hold_time}s. shutting down...')
+                    self.quit(True)
+                continue
+
+            if debouncer.fell:
                 self._print(f'pin {pin_name} triggered: {action}')
         
-                if action in ['K_ESCAPE', 'K_k', 'K_s', 'K_SPACE', 'K_p', 'K_b', 'K_o', 'K_i']:
+                if isinstance(action, str) and action.startswith('folder:'):
+                    self._select_folder(action[len('folder:'):])
+                elif action in ['K_ESCAPE', 'K_k', 'K_s', 'K_SPACE', 'K_p', 'K_b', 'K_o', 'K_i', 'K_f']:
                     pygame.event.post(pygame.event.Event(pygame.KEYDOWN, key=getattr(pygame, action, None)))
                 else:
                     self._playlist.set_next(action)
@@ -512,7 +612,7 @@ class VideoLooper:
         # Main loop to play videos in the playlist and listen for file changes.
         while self._running:
             # Load and play a new movie if nothing is playing.
-            if not self._player.is_playing() and not self._playbackStopped:
+            if not self._player.is_playing() and not self._playbackStopped and not self._reload_requested:
                 if movie is not None: #just to avoid errors
 
                     if movie.playcount >= movie.repeats:
@@ -561,7 +661,9 @@ class VideoLooper:
 
             # Check for changes in the file search path (like USB drives added)
             # and rebuild the playlist.
-            if self._reader.is_changed() and not self._playbackStopped:
+            if (self._reader.is_changed() or self._reload_requested) and not self._playbackStopped:
+                channel_switch = self._reload_requested
+                self._reload_requested = False
                 self._print("reader changed, stopping player")
                 self._player.stop(3)  # Up to 3 second delay waiting for old 
                                       # player to stop.
@@ -578,7 +680,7 @@ class VideoLooper:
                 #refresh background image
                 if self._copyloader:
                     self._bgimage = self._load_bgimage()
-                self._prepare_to_run_playlist(self._playlist)
+                self._prepare_to_run_playlist(self._playlist, channel_switch)
                 self._set_hardware_volume()
                 movie = self._playlist.get_next(self._is_random, self._resume_playlist)
 
