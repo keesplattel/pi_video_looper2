@@ -40,6 +40,23 @@ sudo ./install.sh --user myusername
 
 Default player is vlcplayer.
 
+### Default setup of this fork: folder "channels"
+Out of the box this fork plays videos from `/home/<username>/movies`. Every subfolder is a channel, sorted alphabetically:
+
+```
+/home/pi/movies/
+├── 01 Cartoons/cartoon.mp4
+├── 02 Nature/nature.mp4
+└── 03 News/news.mp4
+```
+
+Buttons (connect between the GPIO pin and Ground):
+* GPIO17 (pin 11) - previous channel
+* GPIO27 (pin 13) - next channel
+* GPIO3 (pin 5) - hold for 2 seconds to shut down the Raspberry Pi
+
+A folder with a single video loops that video endlessly. All of this can be changed in `/boot/video_looper.ini`.
+
 ### Disable USB Auto-mount dialog.
 By default the Raspberry Pi OS file manager displays a pop-up dialog with options for what to do with the files found
 on USB drives that have been inserted. This can overtake and minimize the pi_video_looper program. To disable the

@@ -24,9 +24,9 @@ video_player = vlcplayer
 # Alternatively the directory option will search only a specified directory on the SD 
 # card for media files.  
 # You can change the directory to be used in the [directory] section below.  
-# The default is usb_drive.
-file_reader = usb_drive
-#file_reader = directory
+# The default is directory (each subfolder of the [directory] path is a channel, see folder_select).
+#file_reader = usb_drive
+file_reader = directory
 #file_reader = usb_drive_copymode
 
 # Note on usb_drive_copymode:
@@ -136,7 +136,8 @@ keyboard_control_disabled_while_playback = false
 # its also possible to send "keyboard commands" like shutdown or pause (see readme for available keyboard commands)
 # the format follows the pygame key list (https://www.pygame.org/docs/ref/key.html) see example below. "keyboard_control" needs to be enabled for this to work
 # to enable GPIO set a gpio_pin_map like in the example below or just enable all the example mappings.
-gpio_pin_map = 
+gpio_pin_map = "D17": "folder:prev", "D27": "folder:next", "D3": "shutdown"
+#gpio_pin_map = 
 #gpio_pin_map = "D17" : 1, "D27": 4, "D23": "+2", "D24": "-1", "D22": "video.mp4", "D10": "K_SPACE", "D9": "K_p"
 # Example:
 # GPIO17 (pin 11) starts the 2nd video in the playlist, 
@@ -157,8 +158,8 @@ shutdown_hold_time = 2
 # Switch folders like TV channels with the "folder:next" / "folder:prev" GPIO actions
 # (e.g. two buttons: "D17": "folder:prev", "D27": "folder:next") or the "f" key (next folder).
 # The selection is remembered across restarts. Not used when a [playlist] path is set.
-folder_select = false
-#folder_select = true
+folder_select = true
+#folder_select = false
 
 # The folders to switch between, in channel order, separated by commas or one per line (indented).
 # Relative names are looked up on the USB drive (or in the [directory] path), absolute paths are used as is.
@@ -190,7 +191,7 @@ mount_path = /media/{USERNAME}/
 [directory]
 # The path to search for movies when using the directory file reader.
 # (see the file_reader section above to enable it)
-path = /home/{USERNAME}/Videos
+path = /home/{USERNAME}/movies
 
 
 # Copy-mode file reader configuration follows.
